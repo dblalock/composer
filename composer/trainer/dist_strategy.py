@@ -218,17 +218,18 @@ def prepare_fsdp_module(model: torch.nn.Module, optimizers: Optional[Union[torch
             # Otherwise wrap if root object `obj.fsdp_wrap_fn(module)` is true
             # Or if unwrapped params in module in greater than or equal to fsdp_config.min_params
             def _auto_wrap_policy(module: torch.nn.Module, recurse: bool, unwrapped_params: int) -> bool:
+                if hasattr(module, '_fsdp_wrap'):
+                    return bool(module._fsdp_wrap)
                 if recurse:
                     return True
+                is_large = unwrapped_params >= min_params
+                if hasattr(obj, 'fsdp_wrap_fn') and isinstance(obj.fsdp_wrap_fn, Callable):
+                    return obj.fsdp_wrap_fn(module) or is_large
                 else:
-                    if hasattr(module, '_fsdp_wrap'):
-                        return bool(module._fsdp_wrap)
+                    return is_large
 
-                    is_large = unwrapped_params >= min_params
-                    if hasattr(obj, 'fsdp_wrap_fn') and isinstance(obj.fsdp_wrap_fn, Callable):
-                        return obj.fsdp_wrap_fn(module) or is_large
-                    else:
-                        return is_large
+            ignored_modules = [mod for mod in obj.modules()
+                if hasattr(mod, '_fsdp_wrap') and not mod._fsdp_wrap]
 
             fsdp_obj = FullyShardedDataParallel(
                 obj,
@@ -236,6 +237,7 @@ def prepare_fsdp_module(model: torch.nn.Module, optimizers: Optional[Union[torch
                 auto_wrap_policy=_auto_wrap_policy,
                 cpu_offload=cpu_offload,
                 mixed_precision=mixed_precision,
+                ignored_modules=ignored_modules,
                 backward_prefetch=backward_prefetch,
                 param_init_fn=_param_init_fn,
                 device_id=torch.cuda.current_device(),
